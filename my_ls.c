@@ -13,8 +13,12 @@
 int without_arg(DIR* dir, struct dirent *e);    //good
 int i_case(DIR* dir, struct dirent *e);         //good
 int l_case(DIR* dir, struct dirent *e);         //good
+int n_case(DIR* dir, struct dirent *e);         //good
 void octal_to_rwx_simple(mode_t mode, char *buffer);
 int a_case(DIR* dir, struct dirent *e);         //good
+int d_case(DIR* dir, struct dirent *e);         //good
+int R_case(DIR* dir, struct dirent *e);         //
+
 
 /*
 struct dirent {
@@ -53,16 +57,16 @@ int main(int argc, char *argv[])
                     i_case(dir, e);
                     break;
                 case 'n': // если опция -n, то что-то там в численном виде
-                    //n_case(dir, e);
+                    n_case(dir, e);
                     break;
                 case 'R': // если опция -R, то рекурсивно обходим
-                    //R_case(dir, e);
+                    R_case(dir, e);
                     break;
                 case 'a': // если опция -a, то все-все файлы и даже с точкой
                     a_case(dir, e);
                     break;
                 case 'd': // если опция -d, то что-то там с директориями
-                    //d_case(dir, e);
+                    d_case(dir, e);
                     break;
             }
         }
@@ -116,6 +120,29 @@ int l_case(DIR* dir, struct dirent *e)
     return 0;
 }
 
+int n_case(DIR* dir, struct dirent *e)
+{
+
+
+    while((e = readdir(dir)) != NULL)
+    {
+        if (strcmp(e->d_name, ".") != 0 && strcmp(e->d_name, "..") != 0)
+        {
+            stat(e->d_name, &st);
+            struct tm *now = localtime(&st.st_ctime);
+            const char* months[12] = {"янв", "фев",  "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"};
+            struct passwd *pw = getpwuid(st.st_uid);
+            char permissions[10];
+            octal_to_rwx_simple(st.st_mode, permissions);
+// права доступа (ДА)-> колво ссылок на файл (ДА)-> имя владельца (ДА)-> назв группы -> размер файла в байт (ДА)-> мес (ДА)-> число (ДА)-> чч:мм (ДА)-> имя файла (ДА)\n
+            printf("%-10s %1ld %1d %4d %5ld %3s %2d %02d:%02d %s\n", permissions, st.st_nlink, st.st_uid, pw->pw_gid, st.st_size, months[now->tm_mon], now->tm_mday, now->tm_hour, now->tm_min, e->d_name);
+        }
+    }
+
+    closedir(dir);
+    return 0;
+}
+
 void octal_to_rwx_simple(mode_t mode, char *buffer) 
 {
     const char *patterns[8] = {"---", "--x", "-w-", "-wx", "r--", "r-x", "rw-", "rwx"};
@@ -153,6 +180,45 @@ int a_case(DIR* dir, struct dirent *e)
         printf("%s  ", e->d_name);        
     }
     
+    printf("\n");
+
+    closedir(dir);
+    return 0;
+}
+
+
+int d_case(DIR* dir, struct dirent *e)
+{
+
+    while((e = readdir(dir)) != NULL)
+    {
+        stat(e->d_name, &st);
+
+        if (S_ISDIR(st.st_mode)) 
+        {
+            printf("%s ", e->d_name);
+        }
+    
+    }
+
+    printf("\n");
+
+    closedir(dir);
+    return 0;
+}
+
+
+int R_case(DIR* dir, struct dirent *e)
+{
+
+    while((e = readdir(dir)) != NULL)
+    {
+        stat(e->d_name, &st);
+
+
+    
+    }
+
     printf("\n");
 
     closedir(dir);
