@@ -10,14 +10,14 @@
 #include <grp.h>
 
 
-int without_arg(DIR* dir, struct dirent *e);    //good
-int i_case(DIR* dir, struct dirent *e);         //good
-int l_case(DIR* dir, struct dirent *e);         //good
-int n_case(DIR* dir, struct dirent *e);         //good
+int without_arg(DIR* dir);    //good
+int i_case(DIR* dir);         //good
+int l_case(DIR* dir);         //good
+int n_case(DIR* dir);         //good
 void octal_to_rwx_simple(mode_t mode, char *buffer);
-int a_case(DIR* dir, struct dirent *e);         //good
-int d_case(DIR* dir, struct dirent *e);         //good
-int R_case(DIR* dir, struct dirent *e);         //
+int a_case(DIR* dir);         //good
+int d_case(DIR* dir);         //good
+int R_case(const char *current_path, int depth);
 
 
 /*
@@ -33,15 +33,18 @@ struct stat st;
 
 int main(int argc, char *argv[])
 {
+
     DIR* dir = opendir(".");
     struct dirent *e;
+    int depth = 0;
+    const char *path = ".";
 
     const char *opts = "linRad"; // доступные опции
     int opt; // каждая следующая опция попадает сюда
  
     if (argc == 1)
     { 
-        without_arg(dir, e);
+        without_arg(dir);
         return 0;
     }
     else
@@ -51,22 +54,22 @@ int main(int argc, char *argv[])
             switch(opt) 
             {
                 case 'l': // если опция -l, то выводим развёрнутую инфу про файлы
-                    l_case(dir, e);
+                    l_case(dir);
                     break;
                 case 'i': // если опция -i, то выводим ещё и i_node
-                    i_case(dir, e);
+                    i_case(dir);
                     break;
                 case 'n': // если опция -n, то что-то там в численном виде
-                    n_case(dir, e);
+                    n_case(dir);
                     break;
                 case 'R': // если опция -R, то рекурсивно обходим
-                    R_case(dir, e);
+                    R_case(path, 0);
                     break;
                 case 'a': // если опция -a, то все-все файлы и даже с точкой
-                    a_case(dir, e);
+                    a_case(dir);
                     break;
-                case 'd': // если опция -d, то что-то там с директориями
-                    d_case(dir, e);
+                case 'd': // если опция -d, то выводим только директории
+                    d_case(dir);
                     break;
             }
         }
@@ -77,8 +80,9 @@ int main(int argc, char *argv[])
 }
 
 
-int without_arg(DIR* dir, struct dirent *e)
+int without_arg(DIR* dir)
 {
+    struct dirent *e;
 
     while((e = readdir(dir)) != NULL)
     {
@@ -96,9 +100,9 @@ int without_arg(DIR* dir, struct dirent *e)
 }
 
 
-int l_case(DIR* dir, struct dirent *e)
+int l_case(DIR* dir)
 {
-
+    struct dirent *e;
 
     while((e = readdir(dir)) != NULL)
     {
@@ -120,9 +124,9 @@ int l_case(DIR* dir, struct dirent *e)
     return 0;
 }
 
-int n_case(DIR* dir, struct dirent *e)
+int n_case(DIR* dir)
 {
-
+    struct dirent *e;
 
     while((e = readdir(dir)) != NULL)
     {
@@ -154,8 +158,9 @@ void octal_to_rwx_simple(mode_t mode, char *buffer)
     buffer[9] = '\0';
 }
 
-int i_case(DIR* dir, struct dirent *e)
+int i_case(DIR* dir)
 {
+    struct dirent *e;
 
     while((e = readdir(dir)) != NULL)
     {
@@ -173,8 +178,10 @@ int i_case(DIR* dir, struct dirent *e)
 }
 
 
-int a_case(DIR* dir, struct dirent *e)
+int a_case(DIR* dir)
 {
+    struct dirent *e;
+    
     while((e = readdir(dir)) != NULL)
     {
         printf("%s  ", e->d_name);        
@@ -187,8 +194,9 @@ int a_case(DIR* dir, struct dirent *e)
 }
 
 
-int d_case(DIR* dir, struct dirent *e)
+int d_case(DIR* dir)
 {
+    struct dirent *e;
 
     while((e = readdir(dir)) != NULL)
     {
@@ -208,18 +216,61 @@ int d_case(DIR* dir, struct dirent *e)
 }
 
 
-int R_case(DIR* dir, struct dirent *e)
+int R_case(const char *current_path, int depth)
 {
+    DIR *dir = opendir(current_path);
+    if (dir == NULL) 
+    {
+        return -1;
+    }
+
+    char path[1024];
+    struct dirent *e; // Локальная переменная вместо глобальной!
+    //struct stat st;
+
+    if (depth == 0) 
+    {
+        printf("%s:\n", current_path);
+    }
 
     while((e = readdir(dir)) != NULL)
     {
-        stat(e->d_name, &st);
 
+        if (strcmp(e->d_name, ".") != 0 && strcmp(e->d_name, "..") != 0) 
+        {
+            // Создаем полный путь к элементу
+            snprintf(path, sizeof(path), "%s/%s", current_path, e->d_name);
 
-    
+            // Получаем информацию
+            if (stat(path, &st) != 0) 
+            {
+                perror("stat");
+                continue;
+            }
+
+            // Отступ для визуализации уровня
+            for (int i = 0; i < depth; i++) printf("  ");
+            
+            // Выводим все файлы и папки
+            if (S_ISDIR(st.st_mode)) 
+            {
+                printf("📁 %s/\n", e->d_name);
+            }
+            else 
+            {
+                printf("📄 %s\n", e->d_name);
+            }
+
+            // Если это директория - обрабатываем рекурсивно
+            if (S_ISDIR(st.st_mode)) 
+            {
+                // Рекурсивный вызов для поддиректории
+                R_case(path, depth + 1);
+            }
+        
+        }
+            
     }
-
-    printf("\n");
 
     closedir(dir);
     return 0;
