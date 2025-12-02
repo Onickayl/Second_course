@@ -43,7 +43,7 @@ int main(int argc, char *argv[])
         exit(0);
     }
 
-    else // parent
+    else // pid
     { // read from pipe, write to stdout
 
         // close

@@ -7,7 +7,7 @@ int main()
 {
     int n = 4;
 
-    printf("parent pid = %d\n\n", getpid());
+    printf("pid pid = %d\n\n", getpid());
 
     for(int i = 1; i <= n; i++)
     {
@@ -15,7 +15,7 @@ int main()
 
         if(p==0)
         {
-            printf("child pid = %d my parent ppid = %d\n", getpid(), getppid());
+            printf("child pid = %d my pid ppid = %d\n", getpid(), getppid());
             return 0;
         }
     }
