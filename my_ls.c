@@ -62,7 +62,7 @@ int main(int argc, char *argv[])
                 case 'n': // если опция -n, то что-то там в численном виде
                     n_case(dir);
                     break;
-                case 'R': // если опция -R, то рекурсивно обходим
+                case 'R': // если опция -R, то рекурсивно обходим, depth это глубина или уровень
                     R_case(path, 0);
                     break;
                 case 'a': // если опция -a, то все-все файлы и даже с точкой
@@ -219,57 +219,115 @@ int d_case(DIR* dir)
 int R_case(const char *current_path, int depth)
 {
     DIR *dir = opendir(current_path);
+
     if (dir == NULL) 
     {
         return -1;
     }
 
-    char path[1024];
-    struct dirent *e; // Локальная переменная вместо глобальной!
-    //struct stat st;
+    struct dirent *e;
 
-    if (depth == 0) 
+    char full_path[1024];
+    int first_item = 1; // Для красивого вывода в строку
+
+    // заголовок директории
+    if (depth > 0) 
     {
-        printf("%s:\n", current_path);
+        printf("\n"); // Пустая строка между директориями
+    }
+    
+    printf("%s:\n", current_path);
+
+    // первый проход: выводим только обычные файлы и директории (не начинающиеся с точки, кроме . и ..)
+    while ((e = readdir(dir)) != NULL) 
+    {
+        // Пропускаем все скрытые файлы
+        if (e->d_name[0] == '.') 
+        {
+            continue; // пропускаем всё, что начинается с точки
+        }
+
+        // Формируем полный путь
+        if (strcmp(current_path, ".") == 0) 
+        {
+            strcpy(full_path, e->d_name);
+        } 
+        else 
+        {
+            // склеиваем путь
+            strcpy(full_path, current_path);
+            int len = strlen(full_path);
+
+            if (full_path[len-1] != '/') 
+            {
+                strcat(full_path, "/");
+            }
+
+            strcat(full_path, e->d_name);
+        }
+
+        // Выводим с отступами
+        if (first_item == 0) 
+        {
+            printf("  ");
+        }
+
+        first_item = 0;
+
+        printf("%s", e->d_name);
+
+        // Добавляем / для директорий
+        struct stat st;
+
+        if (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode)) 
+        {
+            printf("/");
+        }
     }
 
-    while((e = readdir(dir)) != NULL)
+    // Если были элементы - новая строка
+    if (first_item == 0) 
     {
+        printf("\n");
+    }
 
-        if (strcmp(e->d_name, ".") != 0 && strcmp(e->d_name, "..") != 0) 
+    // второй проход: рекурсия для поддиректорий
+
+    rewinddir(dir); // возвращаемся в начало директории
+
+    while ((e = readdir(dir)) != NULL) 
+    {
+        // пропускаем скрытые 
+        if (e->d_name[0] == '.') 
         {
-            // Создаем полный путь к элементу
-            snprintf(path, sizeof(path), "%s/%s", current_path, e->d_name);
-
-            // Получаем информацию
-            if (stat(path, &st) != 0) 
-            {
-                perror("stat");
-                continue;
-            }
-
-            // Отступ для визуализации уровня
-            for (int i = 0; i < depth; i++) printf("  ");
-            
-            // Выводим все файлы и папки
-            if (S_ISDIR(st.st_mode)) 
-            {
-                printf("📁 %s/\n", e->d_name);
-            }
-            else 
-            {
-                printf("📄 %s\n", e->d_name);
-            }
-
-            // Если это директория - обрабатываем рекурсивно
-            if (S_ISDIR(st.st_mode)) 
-            {
-                // Рекурсивный вызов для поддиректории
-                R_case(path, depth + 1);
-            }
-        
+            continue;
         }
-            
+
+        // Формируем полный путь
+        if (strcmp(current_path, ".") == 0) 
+        {
+            strcpy(full_path, e->d_name);
+        } 
+        else 
+        {
+            strcpy(full_path, current_path);
+            int len = strlen(full_path);
+
+            if (full_path[len-1] != '/') 
+            {
+                strcat(full_path, "/");
+            }
+
+            strcat(full_path, e->d_name);
+        }
+
+        // Рекурсия только для директорий
+        struct stat st;
+
+        if (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode)) 
+        {
+            R_case(full_path, depth + 1);
+        }
     }
 
     closedir(dir);
