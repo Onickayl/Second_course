@@ -3,7 +3,8 @@
 #include <sys/ipc.h>
 #include <sys/sem.h>
 #include <unistd.h>
-
+#include <stdlib.h>
+#include <sys/wait.h>
 
 union semun
 {
@@ -12,23 +13,20 @@ union semun
     unsigned short *array; // массив для GETALL, SETALL
 } arg;
 
-
 int sem_wait(int semid, int sem_num);
 int sem_signal(int semid, int sem_num);
 
-int passendger(int semid, int people);
+int passendger(int semid, int i);
 void capitan(int semid, int people);
 
-void passendger_want_trip(int semid);
-void passendger_want_earth(int semid);
-
-
+void passendger_want_trip(int semid, int i);
+void passendger_want_earth(int semid, int i);
 
 int main(int argc, char *argv[])
 {
     if (argc != 5)
     { // no argv
-        printf("write: ./name N M num_all_people num_all_trips\n");
+        printf("\nPLEASE WRITE: ./name N M num_all_people num_all_trips\n\n");
         return 0;
     }
 
@@ -38,14 +36,15 @@ int main(int argc, char *argv[])
     int trips = atoi(argv[4]);
 
 
-    // Создание набора семафоров
-    int semid = semget(1234, 6, IPC_CREAT | 0666);
-    if (semid == -1)
+    key_t key = IPC_PRIVATE;
+
+    // создаём 
+    int semid = semget(key, 9, IPC_CREAT | IPC_EXCL | 0666);
+    if (semid == -1) 
     {
         perror("semget");
         exit(1);
     }
-
 
     // Инициализация семафоров
     /* Индексы семафоров в массиве
@@ -55,11 +54,13 @@ int main(int argc, char *argv[])
     3 etr_wait        // количество ожидающих на трап с земли
     4 btr_wait        // количество ожидающих на трап с корабля
     5 trips           // счётчик трипов
-    6 signal          // взаимодействие капитана и людей
+    6 captain_signal  // сигнал капитану
+    7 e_perm          // разрешение войти с земли
+    8 b_perm          // разрешение выйти с борта
     */
 
     union semun arg;
-    unsigned short values[6] = {trap, boat, 0, 0, 0, trips, 0}; // начальные значения
+    unsigned short values[9] = {trap, boat, 0, 0, 0, trips, 0, 0, 0}; // начальные значения
     arg.array = values;
 
     if (semctl(semid, 0, SETALL, arg) == -1)
@@ -68,180 +69,205 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-//прога
-    pid_t p = fork();
-
-    if(p == 0)
+    // Создаём процессы-люди
+    for (int i = 0; i < people; i++)
     {
-        passendger(semid, people);
-
+        if (fork() == 0)
+        {
+            passendger(semid, i+1);
+            exit(0);
+        }
     }
-    else
+
+    // Капитан (родительский процесс)
+    capitan(semid, people);
+
+    // Ждём завершения всех людей
+    for (int i = 0; i < people; i++)
     {
-        capitan(semid, people);
         wait(NULL);
     }
 
-// удаление
+    // удаление
     semctl(semid, IPC_RMID, 0);
 
     return 0;
 }
 
 
-
-
-int passendger(int semid, int people)
+int passendger(int semid, int i)
 {
-    while(is_boat())
+    while (1)
     {
-        passendger_want_trip(semid);
-        if(is_boat())
+        int trips = semctl(semid, 5, GETVAL);
+        if (trips <= 0)
         {
-            printf("путешествует\n");
-            sleep(5);
-            passendger_want_earth(semid);
-            printf("на берегу\n");
+            break; // Выходим, если поездок нет
         }
-        else
+
+        passendger_want_trip(semid, i);
+
+        // Проверяем ещё раз (могли закончиться во время ожидания)
+        trips = semctl(semid, 5, GETVAL);
+        if (trips <= 0) 
         {
-            return 0;
+            break;
         }
-    
+
+        printf("чел %d любуется пейзажем, пока ждёт отплытие\n", i);
+        sleep(1);
+
+        passendger_want_earth(semid, i);
+        printf("чел %d на земле\n", i);
+        sleep(1);
     }
 
     return 0;
-    
-}
-
-is_boat() // что есть катер и можно покататься
-{
-
 }
 
 void capitan(int semid, int people)
 {
 
-    int free_trap = semctl(semid, 0, GETVAL); // свободных мест на трапе
-    int free_boat = semctl(semid, 1, GETVAL); // свободных мест на борту
-    int free_earth = semctl(semid, 2, GETVAL); // свободных мест на земле
-    int etr_wait = semctl(semid, 3, GETVAL);
-    int btr_wait = semctl(semid, 4, GETVAL);
-    int trips = semctl(semid, 5, GETVAL); // трипов
-
-
-    // пока мы не совершили все рейсы - катаем людей
-    while(trips > 0)
+    /* Индексы семафоров в массиве
+    0 free_trap       // счетчик свободных мест на трапе
+    1 free_boat       // счётчик свободных мест на борту
+    2 free_earth      // счётчик свободных мест на земле
+    3 etr_wait        // количество ожидающих на трап с земли
+    4 btr_wait        // количество ожидающих на трап с корабля
+    5 trips           // счётчик трипов
+    6 captain_signal  // сигнал капитану
+    7 permission      // разрешение от капитан
+    */
+    while (1)
     {
-        
-        //ждёт желающих на борт и желающих сойти
-        if((etr_wait > 0 && free_boat > 0) || btr_wait > 0)
+        int trips = semctl(semid, 5, GETVAL); // трипов
+        if (trips <= 0)
         {
-            //cap wait 
+            break;
         }
 
-        if(free_boat == 0 || free_earth == people)
+        
+        int btr_wait = semctl(semid, 4, GETVAL);
+
+        // ждёт желающих сойти
+         while (1)
+        {
+            int btr_wait = semctl(semid, 4, GETVAL);
+            if (btr_wait <= 0) 
+            {
+                break; // Нет желающих выйти
+            }
+            
+            // Ждём сигнала от пассажира
+            sem_wait(semid, 6);
+            
+            // Разрешаем выйти
+            sem_signal(semid, 8);
+            
+            // Ждём подтверждения выхода
+            sem_wait(semid, 6);
+            
+        }
+
+        
+        int free_boat = semctl(semid, 1, GETVAL);  // свободных мест на борту
+        int etr_wait = semctl(semid, 3, GETVAL);
+
+        // ждёт желающих войти
+        if (etr_wait > 0 && free_boat > 0) 
+        {
+            // Обрабатываем пока есть желающие и места
+            while (1) 
+            {
+                int current_etr_wait = semctl(semid, 3, GETVAL);
+                int current_free_boat = semctl(semid, 1, GETVAL);
+                
+                if (current_etr_wait <= 0 || current_free_boat <= 0) break;
+                
+                sem_signal(semid, 7); // разрешаем войти
+                sem_wait(semid, 6);   // ждём подтверждения
+            }
+        }
+
+        free_boat = semctl(semid, 1, GETVAL);
+        int free_earth = semctl(semid, 2, GETVAL); // свободных мест на земле
+
+        // можно ли отплывать?
+        if (free_boat == 0 || free_earth == people)
         {
             printf("катер отплывает\n");
             printf("катер плавает\n");
-            sleep(5);   // имитация плаванья
+            sleep(1); // имитация плаванья
             printf("катер возвращается\n");
 
-            sem_wait(semid, 5); //trips--
-
-            //кэп посылает сигнал, что может покатать?
+            sem_wait(semid, 5); // trips--
         }
     }
+
+    printf("Все поездки завершены!\n");
 }
 
+void passendger_want_trip(int semid, int i)
+{ // хочет на борт
 
-void passendger_want_trip(int semid)
-{//хочет на борт
+    printf("человек %d хочет зайти на борт\n", i);
 
-    print("человек хочет зайти на борт\n");
+    sem_signal(semid, 3); // etrap_wait++ ждущих вход на трап с земли
 
-    sem_signal(semid, 3);   //etrap_wait++ ждущих вход на трап с земли
-
-
-    int free_trap = semctl(semid, 0, GETVAL); // свободных мест на трапе
-    int free_boat = semctl(semid, 1, GETVAL); // свободных мест на борту
-    int free_earth = semctl(semid, 2, GETVAL); // свободных мест на земле
-    int etr_wait = semctl(semid, 3, GETVAL);
-
-    // проверить место на трапе и на борту
-    if(free_trap > 0 && free_boat > 0) // есть место на трапе и борту
-    {
-
-        // заходим на трап
-        printf("человек зашёл на трап с земли\n");
-        sem_signal(semid, 2);//free_earth++
-        sem_wait(semid, 0);//free_trap--
-        sem_wait(semid, 3);//eatrap_wait--
-
-        //заходим на борт
-        printf("человек заходит на борт");
-        sem_signal(semid, 2);//free_earth++
-        sem_wait(semid, 1);//free_boat--
-
-
-    }
-    else if(free_trap = 0 && free_boat > 0) // есть место на борте, но нет на трапе
-    {
-        // ждём когда можно зайти на трап
-        printf("человек ждет места на трапе - земля\n");
-
-    }
-    else // нет место на борту
-    {
-        //ждём следующего трипа
-        printf("человек ждет следующего трипа\n");
-    }
-
-
-}
-
-void passendger_want_earth(int semid)
-{//хочет на землю
-
-    print("человек хочет сойти на землю\n");
-
-    sem_signal(semid, 3);   //btrap_wait++ ждущих вход на трап
-
-
-    int free_trap = semctl(semid, 0, GETVAL); // свободных мест на трапе
-    int free_boat = semctl(semid, 1, GETVAL); // свободных мест на борту
-    int free_earth = semctl(semid, 2, GETVAL); // свободных мест на земле
-    int btr_wait = semctl(semid, 4, GETVAL);
-
-    // проверить место на трапе
-    if(free_trap > 0)
-    {   
-
-        // заходим на трап
-        printf("человек зашёл на трап с борта\n");
-        sem_wait(semid, 4);//btrap_wait--
-        sem_signal(semid,12);//free_boat++
-        sem_wait(semid, 0);//free_trap--
-
-
-        // сходим на землю
-        printf("человек сошёл на землю\n");
-        sem_wait(semid, 0);//free_trap--
-        sem_signal(semid, 2);//free_earth++
-
-
-    }
-    else
-    {
-        // ждём когда можно зайти на трап
-
-        printf("человек ждет места на трапе - борт\n");
-    }
+    // а катер вообще есть?
+    sem_signal(semid, 6); // сиг кэпу ты тут?
+    sem_wait(semid, 7);   // ждём разрешение
     
-    
+
+    // заходим на трап
+    sem_wait(semid, 0); // free_trap--
+    printf("человек %d зашёл на трап с земли\n", i);
+
+    // заходим на борт
+    sem_wait(semid, 1); // free_boat--
+    printf("человек %d зашёл на борт\n", i);
+    sem_signal(semid, 0); // free_trap++
+    sem_signal(semid, 2); // free_earth++
+    sem_wait(semid, 3);   // eatrap_wait--
+
+    sem_signal(semid, 6); // сиг кэпу, что зашли
 }
 
+/* Индексы семафоров в массиве
+0 free_trap       // счетчик свободных мест на трапе
+1 free_boat       // счётчик свободных мест на борту
+2 free_earth      // счётчик свободных мест на земле
+3 etr_wait        // количество ожидающих на трап с земли
+4 btr_wait        // количество ожидающих на трап с корабля
+5 trips           // счётчик трипов
+6 captain_signal  // сигнал капитану
+7 permission      // разрешение от капитан
+*/
 
+void passendger_want_earth(int semid, int i)
+{ // хочет на землю
+
+    printf("человек %d хочет сойти на землю\n", i);
+
+    sem_signal(semid, 4); // btrap_wait++ ждущих вход на трап
+
+    sem_signal(semid, 6); // сиг кэпу, что хотим выйти
+    sem_wait(semid, 8);   // разрешение на выйти
+
+    // заходим на трап
+    sem_wait(semid, 0); // free_trap--
+    printf("человек %d зашёл на трап с борта\n", i);
+    sem_signal(semid, 1); // free_boat++
+
+    // сходим на землю
+    sem_wait(semid, 2); // free_earth--
+    printf("человек %d сошёл на землю\n", i);
+    sem_signal(semid, 0); // free_trap++
+    sem_wait(semid, 4);   // btr_wait--
+
+    sem_signal(semid, 6); // сиг кэпу, что сошли
+
+}
 
 // Операция P (wait)
 int sem_wait(int semid, int sem_num)
